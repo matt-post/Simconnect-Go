@@ -4,38 +4,59 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"strings"
 
 	simconnect_data "github.com/JRascagneres/Simconnect-Go/simconnect-data"
 )
 
 func derefDataType(fieldType string) (uint32, error) {
-	var dataType uint32
 	switch fieldType {
 	case "int32", "bool":
-		dataType = simconnect_data.DATATYPE_INT32
+		return simconnect_data.DATATYPE_INT32, nil
 	case "int64":
-		dataType = simconnect_data.DATATYPE_INT64
+		return simconnect_data.DATATYPE_INT64, nil
 	case "float32":
-		dataType = simconnect_data.DATATYPE_FLOAT32
+		return simconnect_data.DATATYPE_FLOAT32, nil
 	case "float64":
-		dataType = simconnect_data.DATATYPE_FLOAT64
+		return simconnect_data.DATATYPE_FLOAT64, nil
 	case "[8]byte":
-		dataType = simconnect_data.DATATYPE_STRING8
+		return simconnect_data.DATATYPE_STRING8, nil
 	case "[32]byte":
-		dataType = simconnect_data.DATATYPE_STRING32
+		return simconnect_data.DATATYPE_STRING32, nil
 	case "[64]byte":
-		dataType = simconnect_data.DATATYPE_STRING64
+		return simconnect_data.DATATYPE_STRING64, nil
 	case "[128]byte":
-		dataType = simconnect_data.DATATYPE_STRING128
+		return simconnect_data.DATATYPE_STRING128, nil
 	case "[256]byte":
-		dataType = simconnect_data.DATATYPE_STRING256
+		return simconnect_data.DATATYPE_STRING256, nil
 	case "[260]byte":
-		dataType = simconnect_data.DATATYPE_STRING260
+		return simconnect_data.DATATYPE_STRING260, nil
 	default:
-		return 0, fmt.Errorf("DATATYPE not implemented: %s", fieldType)
+		// Handle dynamic [N]byte
+		var size int
+		_, err := fmt.Sscanf(fieldType, "[%d]byte", &size)
+		if err == nil {
+			switch size {
+			case 8:
+				return simconnect_data.DATATYPE_STRING8, nil
+			case 32:
+				return simconnect_data.DATATYPE_STRING32, nil
+			case 64:
+				return simconnect_data.DATATYPE_STRING64, nil
+			case 128:
+				return simconnect_data.DATATYPE_STRING128, nil
+			case 256:
+				return simconnect_data.DATATYPE_STRING256, nil
+			case 260:
+				return simconnect_data.DATATYPE_STRING260, nil
+			default:
+				// Best effort fallback: treat as STRING256 if not a known size
+				return simconnect_data.DATATYPE_STRING256, nil
+			}
+		}
 	}
 
-	return dataType, nil
+	return 0, fmt.Errorf("DATATYPE not implemented: %s", fieldType)
 }
 
 func retryFunc(maxRetryCount int, waitDuration time.Duration, dataFunc func() (bool, error)) error {
