@@ -1,4 +1,4 @@
-module github.com/JRascagneres/Simconnect-Go
+module github.com/matt-post/Simconnect-Go
 
 go 1.16
 
