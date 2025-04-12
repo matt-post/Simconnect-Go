@@ -17,6 +17,27 @@ import (
 	_ "embed"
 )
 
+// NEW CONSTANTS
+const (
+	// Define the receive ID for Jetway data (adjust the numeric value as per your SDK)
+	SIMCONNECT_RECV_ID_JETWAY_DATA uint32 = 21
+
+	// Define SIMOBJECT_TYPE_AIRPORT if not already defined in simconnect_data.
+	// The actual value should match the one specified by SimConnect.
+	SIMOBJECT_TYPE_AIRPORT uint32 = 2
+)
+
+// New struct for receiving jetway data.
+// Adjust the field names, sizes, and types to exactly match the SDK documentation.
+type JetwayData struct {
+	simconnect_data.RecvSimobjectDataByType
+	// Example fields – update them using the official SIMCONNECT_RECV_JETWAY_DATA specification.
+	AirportICAO     [10]byte `name:"Airport ICAO"`
+	NumberOfJetways uint32   `name:"Number Of Jetways"`
+	// For example, assume one jetway identifier. If there are more fields or a dynamic array, expand as needed.
+	JetwayIdentifier [10]byte `name:"Jetway Identifier"`
+}
+
 type SimconnectInstance struct {
 	handle           unsafe.Pointer // handle
 	definitionMap    map[string]uint32
@@ -323,10 +344,8 @@ func (instance *SimconnectInstance) processSimObjectTypeData() (interface{}, err
 	switch recvInfo.ID {
 	case simconnect_data.RECV_ID_SIMOBJECT_DATA_BYTYPE:
 		recvData := *(*simconnect_data.RecvSimobjectDataByType)(ppData)
-
 		instance.definitionMapMutex.Lock()
 		defer instance.definitionMapMutex.Unlock()
-
 		switch recvData.RequestID {
 		case instance.definitionMap["Report"]:
 			report2 := (*Report)(ppData)
@@ -335,14 +354,16 @@ func (instance *SimconnectInstance) processSimObjectTypeData() (interface{}, err
 			report2 := (*APReport)(ppData)
 			return report2, nil
 		}
-
-		break
 	case simconnect_data.RECV_ID_SIMOBJECT_DATA:
 		report2 := (*Report)(ppData)
 		return report2, nil
 	case simconnect_data.RECV_ID_ASSIGNED_OBJECT_ID:
 		recvData := *(*simconnect_data.RecvAssignedObjectID)(ppData)
 		return recvData.ObjectID, nil
+	case SIMCONNECT_RECV_ID_JETWAY_DATA:
+		// NEW: Handle jetway data reception
+		jetwayData := (*JetwayData)(ppData)
+		return jetwayData, nil
 	default:
 		recvData := *(*simconnect_data.RecvSimobjectDataByType)(ppData)
 		return ppData, fmt.Errorf("processSimObjectTypeData() hit default recvInfo: %v ppData: %+v", recvInfo, recvData)
@@ -412,7 +433,6 @@ func (instance *SimconnectInstance) GetReportOnObjectID(objectID uint32) (*Repor
 	}
 	definitionID, _ := instance.getDefinitionID(report)
 	err = instance.requestDataOnSimObject(definitionID, definitionID, objectID, simconnect_data.SIMCONNECT_PERIOD_ONCE)
-
 	if err != nil {
 		return nil, err
 	}
@@ -423,7 +443,42 @@ func (instance *SimconnectInstance) GetReportOnObjectID(objectID uint32) (*Repor
 	}
 
 	return reportData.(*Report), nil
+}
 
+// NEW FUNCTION: GetJetwayData returns the jetway data for an airport specified by its ICAO code.
+func (instance *SimconnectInstance) GetJetwayData(icao string) (*JetwayData, error) {
+	// Create a new instance of JetwayData and copy the provided ICAO code into its field.
+	data := &JetwayData{}
+	copy(data.AirportICAO[:], []byte(icao))
+
+	// Register the data definition for jetway data.
+	err := instance.registerDataDefinition(data)
+	if err != nil {
+		return nil, err
+	}
+	definitionID, _ := instance.getDefinitionID(data)
+
+	// Request airport data. Here we use SIMOBJECT_TYPE_AIRPORT. Adjust the radius (0) if needed.
+	err = instance.requestDataOnSimObjectType(
+		definitionID,
+		definitionID,
+		0,
+		SIMOBJECT_TYPE_AIRPORT,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Process the received data.
+	result, err := instance.processSimObjectTypeData()
+	if err != nil {
+		return nil, err
+	}
+	jetwayData, ok := result.(*JetwayData)
+	if !ok {
+		return nil, fmt.Errorf("unexpected type received")
+	}
+	return jetwayData, nil
 }
 
 func (instance *SimconnectInstance) processEventData(terminate <-chan struct{}) (<-chan simconnect_data.RecvEvent, <-chan error) {
@@ -431,7 +486,7 @@ func (instance *SimconnectInstance) processEventData(terminate <-chan struct{}) 
 	errorChan := make(chan error, 1)
 
 	go func() {
-	forLoop:
+		forLoop:
 		for {
 			select {
 			case <-terminate:
@@ -462,7 +517,6 @@ func (instance *SimconnectInstance) processEventData(terminate <-chan struct{}) 
 	}()
 
 	return recvEventChan, errorChan
-
 }
 
 func (instance *SimconnectInstance) openConnection(simconnectName string) error {
@@ -496,10 +550,9 @@ func (instance *SimconnectInstance) Close() error {
 	return instance.closeConnection()
 }
 
-// LoadFlightPlan will load the supplied flight plan path into the users aircraft. FlightPlanPath must be a pln but the
-// .pln extension must not be supplied with the flight plan.
+// LoadFlightPlan will load the supplied flight plan path into the users aircraft.
+// FlightPlanPath must be a pln but the .pln extension must not be supplied with the flight plan.
 func (instance *SimconnectInstance) LoadFlightPlan(flightPlanPath string) error {
-
 	flightPlanPathArg := []byte(flightPlanPath + "\x00")
 
 	args := []uintptr{
@@ -514,7 +567,7 @@ func (instance *SimconnectInstance) LoadFlightPlan(flightPlanPath string) error 
 	return nil
 }
 
-// LoadParkedATCAircraft will load a parked ATC aircraft with the specified parameters. See SimConnect API reference.
+// LoadParkedATCAircraft will load a parked ATC aircraft with the specified parameters.
 func (instance *SimconnectInstance) LoadParkedATCAircraft(containerTitle, tailNumber, airportICAO string, requestID int) (*uint32, error) {
 	containerTitleArg := []byte(containerTitle + "\x00")
 	tailNumberArg := []byte(tailNumber + "\x00")
@@ -539,7 +592,7 @@ func (instance *SimconnectInstance) LoadParkedATCAircraft(containerTitle, tailNu
 	return &objectID, nil
 }
 
-// LoadNonATCAircraft will load a non ATC (vfr) aircraft with the specified parameters. See SimConnect API reference.
+// LoadNonATCAircraft will load a non ATC (vfr) aircraft with the specified parameters.
 func (instance *SimconnectInstance) LoadNonATCAircraft(containerTitle, tailNumber string, initPos simconnect_data.SimconnectDataInitPosition, requestID int) (*uint32, error) {
 	containerTitleArg := []byte(containerTitle + "\x00")
 	tailNumberArg := []byte(tailNumber + "\x00")
@@ -571,8 +624,7 @@ func b2i(b bool) float64 {
 	return 0
 }
 
-// SetDataOnSimObject allows you to set data for a given sim object, 0 can be used to apply the data to the users
-// aircraft. See SimConnect API reference.
+// SetDataOnSimObject allows you to set data for a given sim object, 0 can be used to apply the data to the users aircraft.
 func (instance *SimconnectInstance) SetDataOnSimObject(objectID uint32, data []SetSimObjectDataExpose) error {
 	InternalSimObjectData := struct {
 		simconnect_data.RecvSimobjectDataByType
@@ -587,7 +639,6 @@ func (instance *SimconnectInstance) SetDataOnSimObject(objectID uint32, data []S
 	}{}
 
 	buf := make([][8]float64, len(data))
-
 	for i := 0; i < len(data); i++ {
 		dataItem := data[i]
 		buf[i] = [8]float64{
@@ -630,8 +681,7 @@ func (instance *SimconnectInstance) setDataOnSimObject(defID, objectID, flags, a
 	return nil
 }
 
-// CreateEnrouteATCAircraft allows you to create an ATC already part way through its flight plan. See SimConnect API
-// reference.
+// CreateEnrouteATCAircraft creates an ATC aircraft already part way through its flight plan.
 func (instance *SimconnectInstance) CreateEnrouteATCAircraft(containerTitle, tailNumber string, flightNumber uint32, flightPlanPath string, flightPlanPosition float32, touchAndGo bool, requestID uint32) (*uint32, error) {
 	containerTitleArg := []byte(containerTitle + "\x00")
 	tailNumberArg := []byte(tailNumber + "\x00")
@@ -655,13 +705,11 @@ func (instance *SimconnectInstance) CreateEnrouteATCAircraft(containerTitle, tai
 	if err != nil {
 		return nil, err
 	}
-
 	objectID := objectIDInterface.(uint32)
-
 	return &objectID, nil
 }
 
-// SetAircraftFlightPlan allows you to set a flight plan for an existing aircraft. See SimConnect API reference.
+// SetAircraftFlightPlan sets a flight plan for an existing aircraft.
 func (instance *SimconnectInstance) SetAircraftFlightPlan(objectID, requestID uint32, flightPlanPath string) error {
 	pathArg := []byte(flightPlanPath + "\x00")
 
@@ -680,7 +728,7 @@ func (instance *SimconnectInstance) SetAircraftFlightPlan(objectID, requestID ui
 	return nil
 }
 
-// RemoveAIObject will remove an AI object from the sim. See SimConnect API reference.
+// RemoveAIObject removes an AI object from the sim.
 func (instance *SimconnectInstance) RemoveAIObject(objectID, requestID uint32) error {
 	args := []uintptr{
 		uintptr(instance.handle),
@@ -707,10 +755,7 @@ func (instance *SimconnectInstance) MapClientEventToSimEvent(eventID uint32, eve
 
 	r1, _, err := procSimconnectMapClientEventToSimEvent.Call(args...)
 	if int32(r1) < 0 {
-		return fmt.Errorf(
-			"SimConnect_MapClientEventToSimEvent for eventID %d error: %d %s",
-			eventID, r1, err,
-		)
+		return fmt.Errorf("SimConnect_MapClientEventToSimEvent for eventID %d error: %d %s", eventID, r1, err)
 	}
 
 	return nil
@@ -728,25 +773,21 @@ func (instance *SimconnectInstance) TransmitClientID(eventID uint32, data uint32
 
 	r1, _, err := procSimconnectTransmitClientEvent.Call(args...)
 	if int32(r1) < 0 {
-		return fmt.Errorf(
-			"SimConnect_TransmitClientEvent for eventID %d and data %d error: %d %s",
-			eventID, data, r1, err,
-		)
+		return fmt.Errorf("SimConnect_TransmitClientEvent for eventID %d and data %d error: %d %s", eventID, data, r1, err)
 	}
 
 	return nil
 }
 
 // SendText will display a text notification in the simulator.
-// Note: This will only be shown if 'Software Tips' are set to 'on' in the Assistance Options in the case of MSFS
 func (instance *SimconnectInstance) SendText(eventID uint32, duration float64, textString string) error {
 	text := []byte(textString + "\x00")
 
 	args := []uintptr{
 		uintptr(instance.handle),
-		uintptr(uint32(0x101)), // text type
-		uintptr(duration),      // duration
-		uintptr(eventID),       // event ID
+		uintptr(uint32(0x101)),
+		uintptr(duration),
+		uintptr(eventID),
 		uintptr(uint32(len(text))),
 		uintptr(unsafe.Pointer(&text[0])),
 	}
@@ -761,7 +802,7 @@ func (instance *SimconnectInstance) SendText(eventID uint32, duration float64, t
 //go:embed "simconnect-data/SimConnect.dll"
 var simconnectDLLBytes []byte
 
-// NewSimConnect returns a new instance of SimConnect which will be used to call the methods.
+// NewSimConnect returns a new instance of SimConnect.
 func NewSimConnect(simconnectName string) (*SimconnectInstance, error) {
 	dllPath := filepath.Join("simconnect-data", "SimConnect.dll")
 
@@ -771,7 +812,6 @@ func NewSimConnect(simconnectName string) (*SimconnectInstance, error) {
 			return nil, err
 		}
 		dllPath = filepath.Join(dir, "SimConnect.dll")
-
 		if err := ioutil.WriteFile(dllPath, simconnectDLLBytes, 0644); err != nil {
 			return nil, err
 		}
